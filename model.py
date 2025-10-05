@@ -4,10 +4,14 @@ from flask_login import UserMixin
 from mongoengine import *
 # from app import db
 
+import os
+
+MONGO_URI = os.getenv("MONGO_URI")
+
 connect(
-    db="Recipe",
-    host="mongodb+srv://22f1001500_db_user:1N4f7lU9WbXOHklo@recipe.zmbe8zj.mongodb.net/?retryWrites=true&w=majority&appName=Recipe"
+    host=MONGO_URI
 )
+
 
 # User Model
 class User(UserMixin, Document):
