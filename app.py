@@ -122,6 +122,16 @@ def delete_recipe(id):
     return jsonify({"message": "Recipe deleted successfully"}), 200
 
 
+#------------------- ERROR HANDLING ---------------- #
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Not found"}), 404
+
+#------------------- ENDPOINT TEST ---------------- #
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({"message": "Welcome to the Recipe API"})
+
 # ---------------- MAIN ---------------- #
 
 if __name__ == "__main__":
