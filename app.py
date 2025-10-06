@@ -2,9 +2,11 @@ from flask import Flask, request, jsonify
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from model import User, Recipe
 import datetime
+from flask_cors import CORS
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
+CORS(app)
 
 # Flask-Login Setup
 login_manager = LoginManager()
