@@ -37,7 +37,9 @@ def login():
     user = User.objects(username=data["username"]).first()
     if user and user.check_password(data["password"]):
         login_user(user)
+        print(user.username+ " logged in")
         return jsonify({"message": "Logged in successfully"})
+    print(data["username"]+ " failed to log in")
     return jsonify({"error": "Invalid credentials"}), 401
 
 
