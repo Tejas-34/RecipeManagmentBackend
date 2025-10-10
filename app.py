@@ -1,34 +1,61 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from model import User, Recipe
 import datetime
 from flask_cors import CORS
+import os
+import jwt
+from functools import wraps
+
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'supersecretkey'
-CORS(app)
+app.secret_key = "sudsfasdfasdfhyknfkwfkwfjsadf"
 
-# Flask-Login Setup
+
+app.config['SESSION_COOKIE_SAMESITE'] = None
+app.config['SESSION_COOKIE_SECURE'] = False 
+
+CORS(app, supports_credentials=True)
+
 login_manager = LoginManager()
 login_manager.init_app(app)
+
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "static/uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.objects(pk=user_id).first()
 
 
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
+
+
+
 # ---------------- AUTH ROUTES ---------------- #
 
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
+    data = request.form  # We'll use form-data to support file uploads
     if User.objects(username=data["username"]).first():
         return jsonify({"error": "Username already exists"}), 400
     if User.objects(email=data["email"]).first():
         return jsonify({"error": "Email already exists"}), 400
-    
+
     user = User(username=data["username"], email=data["email"])
+
+    # Password
     user.set_password(data["password"])
+
+    # Profile Picture
+    if "profile_picture" in request.files:
+        file = request.files["profile_picture"]
+        filename = f"{user.username}_{file.filename}"
+        file.save(os.path.join(UPLOAD_FOLDER, filename))
+        user.profile_picture = f"/static/uploads/{filename}"
+
     user.save()
     return jsonify({"message": "User registered successfully"}), 201
 
@@ -39,9 +66,16 @@ def login():
     user = User.objects(username=data["username"]).first()
     if user and user.check_password(data["password"]):
         login_user(user)
-        print(user.username+ " logged in")
-        return jsonify({"message": "Logged in successfully"})
-    print(data["username"]+ " failed to log in")
+        # print(data["username"], data["password"])
+        return jsonify({
+            "message": "Logged in successfully",
+            "user": {
+                "username": user.username,
+                "email": user.email,
+                "profile_picture": user.profile_picture or None
+            }
+        })
+    
     return jsonify({"error": "Invalid credentials"}), 401
 
 
@@ -54,31 +88,67 @@ def logout():
 
 # ---------------- RECIPE ROUTES ---------------- #
 
-@app.route("/recipe", methods=["POST"])
+@app.route("/recipes", methods=["POST"])
 @login_required
-def add_recipe():
-    data = request.json
+def create_recipe():
+    data = request.form
     recipe = Recipe(
         title=data["title"],
-        description=data.get("description", ""),
-        ingredients=data.get("ingredients", []),
-        steps=data.get("steps", []),
-        image_url=data.get("image_url"),
-        cuisine=data.get("cuisine", "Other"),
-        difficulty=data.get("difficulty", "Easy"),
-        cooking_time=data.get("cooking_time", 0),
-        author=current_user._get_current_object()
+        description=data.get("description"),
+        ingredients=data.getlist("ingredients"),  # ingredients[]=sugar&ingredients[]=milk
+        steps=data.getlist("steps"),
+        cuisine=data.get("cuisine"),
+        difficulty=data.get("difficulty"),
+        cooking_time=int(data.get("cooking_time", 0)),
+        author=current_user
     )
+
+    # Recipe image
+    if "image" in request.files:
+        file = request.files["image"]
+        filename = f"{current_user.username}_{file.filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(filepath)
+        recipe.image_url = filepath
+
     recipe.save()
-    return jsonify({"message": "Recipe added successfully"}), 201
+    return jsonify({"message": "Recipe created successfully", "recipe_id": str(recipe.id)})
+
+
+@app.route("/recipes/<recipe_id>/like", methods=["POST"])
+@login_required
+def like_recipe(recipe_id):
+    recipe = Recipe.objects(pk=recipe_id).first()
+    if not recipe:
+        return jsonify({"error": "Recipe not found"}), 404
+    if current_user in recipe.likes:
+        recipe.unlike_recipe(current_user)
+        return jsonify({"message": "Unliked recipe"})
+    else:
+        recipe.like_recipe(current_user)
+        return jsonify({"message": "Liked recipe"})
+
+
+@app.route("/recipes/<recipe_id>/comment", methods=["POST"])
+@login_required
+def comment_recipe(recipe_id):
+    data = request.json
+    recipe = Recipe.objects(pk=recipe_id).first()
+    if not recipe:
+        return jsonify({"error": "Recipe not found"}), 404
+    content = data.get("content")
+    if not content:
+        return jsonify({"error": "Comment content required"}), 400
+    recipe.add_comment(current_user, content)
+    return jsonify({"message": "Comment added successfully"})
 
 
 @app.route("/recipes", methods=["GET"])
-def get_recipes():
+def list_recipes():
     recipes = Recipe.objects()
-    output = []
+    result = []
     for r in recipes:
-        output.append({
+        result.append({
             "id": str(r.id),
             "title": r.title,
             "description": r.description,
@@ -88,55 +158,23 @@ def get_recipes():
             "cuisine": r.cuisine,
             "difficulty": r.difficulty,
             "cooking_time": r.cooking_time,
-            "author": str(r.author.username) if r.author else None,
-            "created_at": r.created_at,
+            "author": r.author.username,
+            "likes_count": len(r.likes),
+            "comments": [{"user": c.user.username, "content": c.content} for c in r.comments]
         })
-    return jsonify(output)
+    return jsonify(result)
 
 
-@app.route("/recipe/<id>", methods=["PUT"])
+@app.errorhandler(500)
+def internal_error(e):
+    return jsonify({"error": "Internal Server Error"}), 500
+
+
+# test route
+@app.route("/test", methods=["GET"])
 @login_required
-def edit_recipe(id):
-    recipe = Recipe.objects(id=id, author=current_user._get_current_object()).first()
-    if not recipe:
-        return jsonify({"error": "Recipe not found or unauthorized"}), 404
-    
-    data = request.json
-    recipe.update(
-        title=data.get("title", recipe.title),
-        description=data.get("description", recipe.description),
-        ingredients=data.get("ingredients", recipe.ingredients),
-        steps=data.get("steps", recipe.steps),
-        image_url=data.get("image_url", recipe.image_url),
-        cuisine=data.get("cuisine", recipe.cuisine),
-        difficulty=data.get("difficulty", recipe.difficulty),
-        cooking_time=data.get("cooking_time", recipe.cooking_time),
-        updated_at=datetime.datetime.utcnow()
-    )
-    return jsonify({"message": "Recipe updated successfully"}), 200
-
-
-@app.route("/recipe/<id>", methods=["DELETE"])
-@login_required
-def delete_recipe(id):
-    recipe = Recipe.objects(id=id, author=current_user._get_current_object()).first()
-    if not recipe:
-        return jsonify({"error": "Recipe not found or unauthorized"}), 404
-    recipe.delete()
-    return jsonify({"message": "Recipe deleted successfully"}), 200
-
-
-#------------------- ERROR HANDLING ---------------- #
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({"error": "Not found"}), 404
-
-#------------------- ENDPOINT TEST ---------------- #
-@app.route("/", methods=["GET"])
-def index():
+def test():
     return jsonify({"message": "Welcome to the Recipe API"})
-
-# ---------------- MAIN ---------------- #
 
 if __name__ == "__main__":
     app.run(debug=True)
