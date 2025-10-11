@@ -8,7 +8,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 
 connect(
-    db='recipe',
+    db='Recipe',
     host=MONGO_URI,
 )
 
